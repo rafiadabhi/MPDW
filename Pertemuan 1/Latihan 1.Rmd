@@ -1,0 +1,28 @@
+---
+title: "Latihan 1"
+author: "Rafi Adabhi Sunarya"
+date: "2025-08-19"
+output: html_document
+---
+
+```{r}
+# Library Penting
+
+# Manajemen data
+library(dplyr)      # manipulasi data
+library(tidyr)      # data tidying
+library(readr)      # membaca data csv/tsv
+library(openxlsx)   # membaca/menulis Excel
+
+# Visualisasi
+library(ggplot2)    # visualisasi
+library(GGally)     # matriks korelasi, scatterplot matrix
+
+# Statistik
+library(car)        # uji asumsi regresi
+library(lmtest)     # uji autokorelasi, heteroskedastisitas
+library(nortest)    # uji normalitas
+library(psych)      # analisis deskriptif
+library(MASS)       # regresi, model statistik klasik
+```
+
