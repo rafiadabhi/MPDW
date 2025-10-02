@@ -1,0 +1,152 @@
+---
+title: "Tugas-Pertemuan_5"
+author: "Rafi Adabhi Sunarya"
+date: "2025-10-02"
+output:   
+  html_document:
+    toc: true
+    toc_float: true
+    theme: sandstone
+    highlight: zenburn
+---
+## 1. Packages
+```{r}
+library(rio)
+library(ggplot2)
+library(tsibble)
+library(tseries)
+library(MASS)
+library(readr)
+library(TSA)
+```
+
+## 2. Import Data
+```{r}
+df <- read_csv("https://raw.githubusercontent.com/rafiadabhi/MPDW/main/Pertemuan%201/Data/crude_oil_clean_period_price.csv")
+data <- df$price[255:382]
+print(data)
+```
+### 2.1 Karakteristik Data
+```{r}
+length(data) 
+head(data)     
+tail(data)     
+is.numeric(data)  
+```
+
+### 2.2 Data Spliting
+```{r}
+n <- length(data)          # total = 128
+n_train <- floor(0.8 * n)  # 80% = 102
+
+train_data <- data[1:n_train]
+test_data  <- data[(n_train+1):n]
+
+length(train_data)  # 102
+length(test_data)   # 26
+```
+
+## 3. Eksplorasi Data
+### 3.1 Plot Data Penuh
+```{r}
+plot.ts(data, 
+        lty = 1, 
+        xlab = "Waktu", 
+        ylab = "Harga", 
+        main = "Plot Data Harga Crude Oil")
+```
+
+### 3.2 Plot Data Latih
+```{r}
+plot.ts(train_data, lty=1, xlab="waktu", ylab="harga", main="Plot Harga Crude Oil Train")
+```
+
+### 3.3 Plot Data Uji
+```{r}
+plot.ts(test_data, lty=1, xlab="waktu", ylab="Harga", main="Plot Harga Crude Oil Test")
+```
+
+## 4. Uji Stasioneritas Data
+
+### 4.1 Plot ACF
+```{r}
+acf(train_data)
+```
+Berdasarkan plot ACF, terlihat bahwa plot ACF data menurun secara perlahan (tails of slowly). Hal ini juga menjadi indikasi bahwa data tidak stasioner dalam rataan
+
+### 4.2 Uji ADF
+```{r}
+tseries::adf.test(train_data)
+```
+$H_0$ : Data tidak stasioner dalam rataan
+$H_1$ : Data stasioner dalam rataan
+
+Berdasarkan uji ADF tersebut, didapat p-value sebesar 0.0224 yang lebih kecil dari taraf nyata 5% sehingga tolak $H_0$ dan menandakan bahwa data stasioner dalam rataan. 
+
+### 4.3 Plot Box-Cox
+```{r}
+# Uji Box-Cox
+index <- seq(1:102)
+bc <- boxcox(
+  train_data - min(train_data) + 1 ~ index,
+  lambda = seq(0, 5, by = 0.001)
+)
+```
+
+```{r}
+# Nilai lambda optimum (dibulatkan)
+lambda <- bc$x[which.max(bc$y)]
+lambda
+```
+
+```{r}
+# Selang kepercayaan 95% untuk lambda
+ci_lambda <- bc$x[bc$y > max(bc$y) - 0.5 * qchisq(0.95, 1)]
+
+# Batas bawah dan batas atas
+ci_lower <- min(ci_lambda)
+ci_upper <- max(ci_lambda)
+
+c(Batas_Bawah = ci_lower, Batas_Atas = ci_upper)
+```
+
+Hasil uji Box–Cox menunjukkan bahwa nilai λ optimum adalah 0,592 dengan interval kepercayaan 95% sebesar (0,390–0,813). Karena selang tersebut tidak memuat nilai λ = 1, maka dapat disimpulkan bahwa data tidak stasioner dalam ragam sehingga diperlukan transformasi.
+
+## 5. Penanganan Stasioneritas Data
+### 5.1 Transformasi Box-Cox
+
+```{r}
+# Data digeser agar positif
+y_shift <- train_data - min(train_data) + 1
+
+# Transformasi Box-Cox dengan lambda ~ 0.5 (akar kuadrat)
+y_bc <- y_shift^0.5
+```
+
+```{r}
+# Uji Box-Cox
+bc <- boxcox(
+  y_bc ~ index,
+  lambda = seq(0, 5, by = 0.001)
+)
+```
+
+```{r}
+# Nilai lambda optimum (dibulatkan)
+lambda <- bc$x[which.max(bc$y)]
+lambda
+```
+
+```{r}
+# Selang kepercayaan 95% untuk lambda
+ci_lambda <- bc$x[bc$y > max(bc$y) - 0.5 * qchisq(0.95, 1)]
+
+# Batas bawah dan batas atas
+ci_lower <- min(ci_lambda)
+ci_upper <- max(ci_lambda)
+
+c(Batas_Bawah = ci_lower, Batas_Atas = ci_upper)
+```
+
+
+
