@@ -1,0 +1,395 @@
+---
+title: "Tugas-Pertemuan-6"
+author: "Rafi Adabhi Sunarya"
+date: "2025-10-02"
+output:   
+  html_document:
+    toc: true
+    toc_float: true
+    theme: sandstone
+    highlight: zenburn
+---
+
+## 1. Packages
+
+```{r warning=FALSE}
+library(rio)
+library(ggplot2)
+library(tsibble)
+library(tseries)
+library(MASS)
+library(readr)
+library(TSA)
+library(forecast)
+```
+
+## 2. Import Data
+
+```{r}
+df <- read_csv("https://raw.githubusercontent.com/rafiadabhi/MPDW/main/Pertemuan%201/Data/crude_oil_clean_period_price.csv")
+data <- df$price[255:382]
+print(data)
+```
+
+### 2.1 Karakteristik Data
+
+```{r}
+length(data) 
+head(data)     
+tail(data)     
+is.numeric(data)  
+```
+
+### 2.2 Data Spliting
+
+```{r}
+n <- length(data)          # total = 128
+n_train <- floor(0.8 * n)  # 80% = 102
+
+train_data <- data[1:n_train]
+test_data  <- data[(n_train+1):n]
+
+length(train_data)  # 102
+length(test_data)   # 26
+```
+
+## 3. Eksplorasi Data
+
+### 3.1 Plot Data Penuh
+
+```{r}
+plot.ts(data, 
+        lty = 1, 
+        xlab = "Waktu", 
+        ylab = "Harga", 
+        main = "Plot Data Harga Crude Oil")
+```
+
+### 3.2 Plot Data Latih
+
+```{r}
+plot.ts(train_data, lty=1, xlab="waktu", ylab="harga", main="Plot Harga Crude Oil Train")
+```
+
+### 3.3 Plot Data Uji
+
+```{r}
+plot.ts(test_data, lty=1, xlab="waktu", ylab="Harga", main="Plot Harga Crude Oil Test")
+```
+
+## 4. Uji Stasioneritas Data
+
+### 4.1 Plot ACF
+
+```{r}
+acf(train_data)
+```
+
+Berdasarkan plot ACF, terlihat bahwa plot ACF data menurun secara perlahan (tails of slowly). Hal ini juga menjadi indikasi bahwa data tidak stasioner dalam rataan
+
+### 4.2 Uji ADF
+
+```{r}
+tseries::adf.test(train_data)
+```
+
+$H_0$ : Data tidak stasioner dalam rataan $H_1$ : Data stasioner dalam rataan
+
+Berdasarkan uji ADF tersebut, didapat p-value sebesar 0.0224 yang lebih kecil dari taraf nyata 5% sehingga tolak $H_0$ dan menandakan bahwa data stasioner dalam rataan.Namun jika menggunakan taraf nyata 1% hipotesis nya tak tolak $H_0$, sehingga ada indikasi rataan tidak stasioner
+
+### 4.3 Plot Box-Cox
+
+```{r}
+# Uji Box-Cox
+index <- seq(1:102)
+bc <- boxcox(
+  train_data - min(train_data) + 1 ~ index,
+  lambda = seq(0, 5, by = 0.001)
+)
+```
+
+```{r}
+# Nilai lambda optimum (dibulatkan)
+lambda <- bc$x[which.max(bc$y)]
+lambda
+```
+
+```{r}
+# Selang kepercayaan 95% untuk lambda
+ci_lambda <- bc$x[bc$y > max(bc$y) - 0.5 * qchisq(0.95, 1)]
+
+# Batas bawah dan batas atas
+ci_lower <- min(ci_lambda)
+ci_upper <- max(ci_lambda)
+
+c(Batas_Bawah = ci_lower, Batas_Atas = ci_upper)
+```
+
+Hasil uji Box–Cox menunjukkan bahwa nilai λ optimum adalah 0,592 dengan interval kepercayaan 95% sebesar (0,390–0,813). Karena selang tersebut tidak memuat nilai λ = 1, maka dapat disimpulkan bahwa data tidak stasioner dalam ragam sehingga diperlukan transformasi.
+
+## 5. Penanganan Stasioneritas Data
+
+### 5.1 Transformasi Box-Cox
+```{r}
+# Data digeser agar positif
+y_shift <- train_data - min(train_data) + 1
+
+# Transformasi Box-Cox dengan lambda ~ 0.5 (akar kuadrat)
+y_bc <- y_shift^0.5
+```
+
+```{r}
+# Uji Box-Cox
+bc <- boxcox(
+  y_bc ~ index,
+  lambda = seq(0, 5, by = 0.001)
+)
+```
+
+```{r}
+# Nilai lambda optimum (dibulatkan)
+lambda <- bc$x[which.max(bc$y)]
+lambda
+```
+
+```{r}
+# Selang kepercayaan 95% untuk lambda
+ci_lambda <- bc$x[bc$y > max(bc$y) - 0.5 * qchisq(0.95, 1)]
+
+# Batas bawah dan batas atas
+ci_lower <- min(ci_lambda)
+ci_upper <- max(ci_lambda)
+
+c(Batas_Bawah = ci_lower, Batas_Atas = ci_upper)
+```
+
+## 6. Identifikasi Model
+
+### 6.1 Plot ACF untuk MA(q)
+```{r}
+acf(y_bc)
+```
+Berdasarkan plot tersebut, terlihat bahwa plot ACF cenderung tails off pada lag ke 8
+
+### 6.2 Plot PACF untuk AR(p=)
+```{r}
+pacf(y_bc)
+```
+Berdasarkan plot tersebut, terlihat bahwa plot PACF cenderung cuts off pada lag ke 2
+
+```{r}
+eacf(y_bc)
+```
+
+Berdasarkan plot tersebut, terlihat bahwa plot EACF menunjukan kandidat model ARMA(1,1) atau ARMA(2,1)
+
+## 7. Pendugaan Parameter Model ARMA
+
+### ARIMA(1,0,2)
+```{r}
+model102.da <- Arima(y_bc, order = c(1, 0, 2))  
+summary(model102.da) #AIC 200.63
+```
+```{r}
+lmtest::coeftest(model102.da) #terdapat parameter tidak signifikan
+```
+
+
+### ARIMA (2,0,1)
+```{r}
+model201.da <- Arima(y_bc, order = c(2, 0, 1))  
+summary(model201.da) #AIC 198.71
+```
+```{r}
+lmtest::coeftest(model201.da) # semua parameter signifikan
+```
+
+
+### ARIMA (0,0,8)
+```{r}
+model008.da <- Arima(y_bc, order = c(0, 0, 8))  
+summary(model008.da) #AIC 196.02
+```
+
+```{r}
+lmtest::coeftest(model008.da) # semua parameter signifikan
+```
+
+### ARIMA (3,0,2)
+```{r}
+model302.da <- Arima(y_bc, order = c(3, 0, 2))  
+summary(model302.da) #AIC 201.34
+```
+
+```{r}
+lmtest::coeftest(model302.da) #terdapat parameter tidak signifikan
+```
+
+
+## 8. Ringkasan AIC
+```{r}
+model_tentatif <- data.frame(
+  Model = c("ARIMA(1,0,2)","ARIMA(2,0,1)","ARIMA(0,0,8)", "ARIMA(3,0,2)"),
+  AIC   = c(AIC(model102.da),AIC(model201.da), AIC(model008.da), AIC(model302.da)),
+  BIC   = c(BIC(model102.da),BIC(model201.da), BIC(model008.da), BIC(model302.da))
+)
+
+model_tentatif
+```
+Berdasarkan pendugaan parameter di atas, nilai AIC terkecil dimiliki oleh model ARIMA(0,0,8) dan parameter model ARIMA(0,0,8) juga seluruhnya signifikan sehingga model yang dipilih adalah model ARIMA(0,0,8).
+
+## 9. Analisis Sisaan
+
+Model terbaik hasil identifikasi kemudian dicek asumsi sisaannya. Sisaan model ARIMA harus memenuhi asumsi normalitas, kebebasan sisaan, dan kehomogenan ragam. Diagnostik model dilakukan secara eksplorasi dan uji formal.
+
+### 9.1 Eksplorasi Sisaan
+
+```{r}
+sisaan.da <- model008.da$residuals
+
+par(mfrow = c(2,2),    
+    mar = c(4,4,2,1),  
+    oma = c(0,0,2,0))  
+
+# Q-Q Plot
+qqnorm(sisaan.da, main = "Normal Q-Q Plot")
+qqline(sisaan.da, col = "blue", lwd = 2)
+
+# Plot Sisaan vs Waktu
+plot(sisaan.da, type = "p",
+     main = "Plot Sisaan vs Waktu",
+     xlab = "Waktu", ylab = "Sisaan")
+
+# ACF
+acf(sisaan.da, main = "ACF Sisaan")
+
+# PACF
+pacf(sisaan.da, main = "PACF Sisaan")
+```
+
+Berdasarkan plot kuantil-kuantil normal, secara eksploratif terlihat bahwa sisaan cenderung menyebar normal karena. Selain itu, lebar pita sebaran sisaan tampak seragam, yang mengindikasikan adanya homogenitas ragam. Sementara itu, plot ACF dan PACF sisaan dari model ARIMA(0,0,8) menunjukkan tidak adanya spike signifikan pada 20 lag pertama, sehingga secara visual sisaan dapat dianggap saling bebas. Kondisi ini akan diuji lebih lanjut dengan uji formal.
+
+## 10. Uji Formal
+
+```{r}
+#1) Sisaan Menyebar Normal 
+ks.test(sisaan.da,"pnorm")  #gagal tolak H0 > sisaan menyebar normal
+```
+
+Selain dengan eksplorasi, asumsi tersebut dapat diuji menggunakan uji formal. Pada tahapan ini uji formal yang digunakan untuk normalitas adalah uji Kolmogorov-Smirnov (KS). Hipotesis pada uji KS adalah sebagai berikut.
+
+$H_0$ : Sisaan menyebar normal
+
+$H_1$ : Sisaan tidak menyebar normal
+
+Berdasarkan uji KS tersebut, didapat p-value sebesar $0.007523$ yang kurang dari taraf nyata 5% sehingga tolak $H_0$ dan menandakan bahwa sisaan tidak menyebar normal. Hal ini sesuai dengan hasil eksplorasi menggunakan plot kuantil-kuantil normal.
+
+```{r}
+#2) Sisaan saling bebas/tidak ada autokorelasi 
+Box.test(sisaan.da, type = "Ljung")  #gagal tolak H0 > sisaan saling bebas
+```
+
+Selanjutnya akan dilakukan uji formal untuk kebebasan sisaan menggunakan uji Ljung-Box. Hipotesis yang digunakan adalah sebagai berikut.
+
+$H_0$ : Sisaan saling bebas
+
+$H_1$ : Sisaan tidak tidak saling bebas
+
+Berdasarkan uji Ljung-Box tersebut, didapat p-value sebesar 0.9574 yang lebih besar dari taraf nyata 5% sehingga gagal tolak $H_0$ dan menandakan bahwa sisaan saling bebas. Hal ini berbeda dengan eksplorasi.
+
+```{r}
+#3) Sisaan homogen 
+Box.test((sisaan.da)^2, type = "Ljung")  #gagal tolak H0 > sisaan homogen
+```
+
+Hipotesis yang digunakan untuk uji kehomogenan ragam adalah sebagai berikut.
+
+$H_0$ : Ragam sisaan homogen
+
+$H_0$ : Ragam sisaan tidak homogen
+
+Berdasarkan uji Ljung-Box terhadap sisaan kuadrat tersebut, didapat p-value sebesar 0.6642 yang lebih dari taraf nyata 5% sehingga tolak $H_0$ dan menandakan bahwa ragam sisaan homogen.
+
+```{r}
+#4) Nilai tengah sisaan sama dengan nol 
+t.test(sisaan.da, mu = 0, conf.level = 0.95)  #gagal tolak h0 > nilai tengah sisaan sama dengan 0
+```
+
+Terakhir, dengan uji-t, akan dicek apakah nilai tengah sisaan sama dengan nol. Hipotesis yang diujikan sebagai berikut.
+
+$H_0$ : nilai tengah sisaan sama dengan 0
+
+$H_0$ : nilai tengah sisaan tidak sama dengan 0
+
+Berdasarkan uji-ttersebut, didapat p-value sebesar 0.6786 yang lebih besar dari taraf nyata 5% sehingga gagal tolak $H_0$ dan menandakan bahwa nilai tengah sisaan sama dengan nol.
+
+## 11. Overfitting
+
+Tahapan selanjutnya adalah overfitting dilakukan dengan menaikkan orde AR(p) dan MA(q) dari model ARIMA(0,0,8) Kandidat model overfitting adalah ARIMA(0,0,9) dan ARIMA(1,0,8). Karena model hasil overfitting sudah termasuk di dalam model tentatif dan hasilnya tidak lebih baik, maka model terbaik yang dipilih adalah ARIMA(0,1,1) dilanjutkan dengan peramalan.
+
+```{r}
+model009.da <- Arima(y_bc, order = c(0, 0, 9))  
+summary(model009.da) #AIC 197.94
+```
+```{r}
+lmtest::coeftest(model009.da) #terdapat ada parameter signifikan
+```
+
+```{r}
+model108.da <- Arima(y_bc, order = c(1, 0, 8))  
+summary(model108.da) #AIC 197.96
+```
+
+```{r}
+lmtest::coeftest(model108.da) #parameter signifikan
+```
+
+Karena model hasil overfitting sudah termasuk hasilnya tidak lebih baik, maka model terbaik yang dipilih adalah ARIMA(0,0,8) dilanjutkan dengan peramalan.
+
+## 12. Model Terbaik : ARIMA(0,0,8)
+```{r}
+bestmodel.da=Arima(train_data, order=c(0,0,8),method="ML")
+summary(bestmodel.da)
+```
+
+```{r}
+lmtest::coeftest(bestmodel.da)
+```
+
+## 13. Peramalan
+Peramalan dilakukan menggunakan fungsi forecast(). Contoh peramalan berikut ini dilakukan untuk 30 hari ke depan.
+
+```{r}
+# ---FORECAST---
+ramalan.da <- forecast::forecast(bestmodel.da, h = length(test_data))
+```
+
+```{r}
+data.ramalan.da <- ramalan.da$mean
+plot(ramalan.da)
+```
+
+```{r}
+# 3. Kembalikan hasil forecast ke skala asli
+ramalan.da$mean <- InvBoxCox(ramalan.da$mean, lambda)
+ramalan.da$lower <- InvBoxCox(ramalan.da$lower, lambda)
+ramalan.da$upper <- InvBoxCox(ramalan.da$upper, lambda)
+```
+
+```{r}
+autoplot(ramalan.da) +
+  ggtitle("Hasil Forecast Model ARIMA (Skala Asli)") +
+  xlab("Waktu") +
+  ylab("Nilai (Skala Asli)") +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    panel.grid.minor = element_blank()
+  )
+```
+
+```{r}
+hasil_akurasi <- accuracy(ramalan.da)
+hasil_akurasi
+```
+
