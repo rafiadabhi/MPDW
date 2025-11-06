@@ -1,0 +1,498 @@
+---
+title: "Analisis Kelompok 4"
+author: "Kelompok 4"
+date: "2025-10-02"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: sandstone
+    highlight: zenburn
+  pdf_document:
+    toc: true
+---
+
+## 1. Packages
+```{r message=FALSE, warning=FALSE}
+library(rio)
+library(ggplot2)
+library(tsibble)
+library(tseries)
+library(MASS)
+library(readr)
+library(TSA)
+library(forecast)
+library(lubridate)
+library(readxl)
+library(knitr)
+```
+
+## 2. Import Data
+```{r message=FALSE, warning=FALSE}
+url <- "https://raw.githubusercontent.com/rafiadabhi/MPDW/main/Pertemuan%201/Data/SM_Rata2_Mingguan_Indramayu_2014_2023.xlsx"
+temp_file <- tempfile(fileext = ".xlsx")
+download.file(url, destfile = temp_file, mode = "wb")
+df <- read_excel(temp_file)
+
+df_values <- df$sm
+
+start_date <- df[[1]][1] 
+start_year <- as.integer(format(start_date, "%Y"))
+start_week <- as.integer(format(start_date, "%W")) + 1 
+
+date_col <- df[[1]]
+full_year_vector <- as.integer(format(date_col, "%Y"))
+
+data <- ts(
+  df_values, 
+  start = c(start_year, start_week), 
+  frequency = 52
+)
+
+```
+
+### 2.1 Karakteristik Data
+```{r}
+length(data) 
+head(data)     
+tail(data)     
+is.numeric(data)  
+```
+
+### 2.2 Data Spliting
+```{r}
+train_data <- subset(data,start=1,end=469)
+test_data <- subset(data,start=470,end=522)
+```
+
+## 3. Eksplorasi Data
+
+```{r}
+summary(data)
+```
+
+### 3.1 Plot Data Penuh
+```{r}
+plot.ts(data, 
+        lty = 1, 
+        xlab = "Tahun", 
+        ylab = "SM", 
+        main = "Plot Kelembaban Tanah")
+```
+
+```{r}
+ts.plot(data, type="l", xlab = "Tahun", ylab="SM", col="blue")
+title(main = "Plot Kelembaban Tanah", cex.sub = 0.8)
+points(data, pch = 1, col = "blue")
+```
+
+### 3.2 Plot Data Latih
+```{r}
+autoplot(train_data) + theme_bw() + xlab("Year") + ylab("Soil Moisture")
+```
+
+### 3.3 Plot Data Uji
+```{r}
+autoplot(test_data) + theme_bw() + xlab("Year") + ylab("Soil Moisture")
+```
+
+### 3.3 Plot Seasonal
+```{r}
+data.tss <- ts(data, frequency = 52, start = c(2014, 1))
+dec.data <- decompose(data.tss)
+plot(dec.data)
+```
+
+```{r}
+par(mar=c(5, 4, 4, 6) + 0.1, xpd=TRUE)
+seasonplot(data,52,main="Seasonal Plot of Soil Moisture", ylab="Year",
+           year.labels = TRUE, col=rainbow(10))
+par(mar=c(5, 4, 4, 2) + 0.1)
+```
+
+
+```{r}
+monthplot(data.tss,ylab="Soil Moisture", col="blue")
+```
+
+```{r}
+n <- length(data)                 
+n_train <- floor(0.9 * n)  
+full_year_vector <- as.integer(format(df[[1]], "%Y"))
+train_year_vector <- full_year_vector[1:n_train]
+
+frame_fligner_train <- data.frame(
+  values = as.numeric(train_data), 
+  date_year = factor(train_year_vector) # Kelompokkan berdasarkan Tahun (seharusnya 10 level)
+)
+
+ggplot(frame_fligner_train, aes(y=values, x=date_year)) +
+  geom_boxplot() +
+  labs(
+    title = "Variabilitas Kelembaban Tanah Mingguan Berdasarkan Tahun",
+    x = "Tahun",
+    y = "Rata-rata SM Mingguan"
+  ) +
+  theme_minimal()
+```
+
+## 4. Non-seasonal ARIMA
+
+### 4.1 Stasioneritas
+
+```{r}
+# Uji Box-Cox
+index <- seq(length(train_data))
+bc <- boxcox(
+  train_data - min(train_data) + 0.000000000000000000001 ~ index,
+  lambda = seq(0.5, 1.5, by = 0.001)
+)
+```
+```{r}
+lambda_opt <- bc$x[which.max(bc$y)]
+lambda_opt
+```
+```{r}
+# Selang kepercayaan 95% untuk lambda
+ci_lambda <- bc$x[bc$y > max(bc$y) - 0.5 * qchisq(0.95, 1)]
+
+# Batas bawah dan batas atas
+ci_lower <- min(ci_lambda)
+ci_upper <- max(ci_lambda)
+
+c(Batas_Bawah = ci_lower, Batas_Atas = ci_upper)
+```
+Hasil uji Box–Cox menunjukkan bahwa nilai λ optimum adalah 0,98 dengan interval kepercayaan 95% sebesar (0,804–1,170). Karena selang tersebut memuat nilai λ = 1, maka dapat disimpulkan bahwa data sudah stasioner dalam ragam
+
+
+
+```{r}
+acf(train_data, lag.max = 520, main = "ACF Plot", col = "blue")
+```
+
+```{r}
+acf(train_data)
+```
+
+```{r}
+acf0 <- acf(train_data, main = "ACF", lag.max = 520, plot = FALSE)
+acf0$lag <- acf0$lag * 52
+acf_df <- data.frame(acf = acf0$acf, lag = acf0$lag)
+
+acf_year <- acf_df[acf_df$lag %% 52 == 0, ]   # ← koma di sini penting!
+
+barplot(
+  height = acf_year$acf,
+  names.arg = acf_year$lag,
+  ylab = "ACF",
+  xlab = "Lag (mingguan)",
+  main = "Autokorelasi Tahunan Kelembaban Tanah"
+)
+```
+
+```{r}
+tseries::adf.test(train_data)
+```
+
+$H_0$ : Data tidak stasioner dalam rataan 
+$H_1$ : Data stasioner dalam rataan
+
+Berdasarkan uji ADF tersebut, didapat p-value sebesar 0.01 yang lebih kecil dari taraf nyata 5% sehingga tolak $H_0$ dan menandakan bahwa data sudah stasioner dalam rataan.
+
+
+## 5. Seasonal ARIMA
+
+### 5.1 Identifikasi Model
+
+```{r}
+D1 <- diff(train_data, lag = 52)
+ts.plot(D1, type="l", ylab="y_diff1 Xt", col="blue")
+d1D1 <- diff(D1,lag=1)
+```
+
+```{r}
+acf3 <- acf(D1, lag.max = 520, xaxt = "n", main = "ACF D1", col = "blue")
+lag_pos <- acf3$lag * 52 
+lag_seasonal <- seq(0, 520, by = 52)
+axis(1, at = lag_seasonal / 52, labels = lag_seasonal)
+```
+
+```{r}
+acf0 <- acf(D1, main = "ACF", lag.max = 520, plot = FALSE)
+acf0$lag <- acf0$lag * 52
+acf_df <- data.frame(acf = acf0$acf, lag = acf0$lag)
+
+acf_year <- acf_df[acf_df$lag %% 52 == 0, ]
+alpha <- 0.001
+batas <- qnorm(1 - alpha/2) / sqrt(length(D1))
+
+
+bar_positions <- barplot(
+  height = acf_year$acf,
+  names.arg = acf_year$lag,
+  ylab = "ACF",
+  xlab = "Lag (mingguan)",
+  main = "Autokorelasi Tahunan Kelembaban Tanah",
+  ylim = c(min(acf_year$acf, -batas*1.5), max(acf_year$acf, batas*1.5))
+)
+
+abline(h = c(-batas, batas), col = "red", lty = 2)
+
+```
+
+```{r}
+pacf3 <- pacf(D1, lag.max = 520, xaxt = "n", main = "PACF D1", col = "blue")
+lag_seasonal <- seq(0, 520, by = 52)
+axis(1, at = lag_seasonal / 52, labels = lag_seasonal)
+
+```
+
+```{r}
+pacf0 <- pacf(D1, lag.max = 520, plot = FALSE)
+pacf_df <- data.frame(pacf = pacf0$acf, lag = 1:length(pacf0$acf))
+pacf_year <- pacf_df[pacf_df$lag %% 52 == 0, ]
+
+bar_positions <- barplot(
+  height = pacf_year$pacf,
+  names.arg = pacf_year$lag,
+  ylab = "PACF",
+  xlab = "Lag (mingguan)",
+  main = "Partial Autokorelasi Tahunan Kelembaban Tanah",
+  ylim = c(min(pacf_year$pacf, -batas*1.5), max(pacf_year$pacf, batas*1.5))
+)
+abline(h = c(-batas, batas), col = "red", lty = 2)
+```
+Berdasarkan plot ACF dan PACF seasonal (s = 52) diperoleh nilai P = 1 dan Q = 1
+
+```{r}
+par(mfrow = c(1,2))
+acf(D1, lag.max = 10, main = "ACF after seasonal diff (D=1)")
+pacf(D1, lag.max = 10, main = "PACF after seasonal diff (D=1)")
+par(mfrow = c(1,1))
+```
+Plot ACF menunjukkan tails off dan plot PACF menunjukkan pola cut off pada lag 4. Kriteria tails off pada ACF dan cut off pada PACF merupakan kriteria dari AR dengan ordo p adalah 4 sehingga menghasilkan kandidat model ARIMA(4,0,0).
+
+```{r}
+eacf(D1)
+```
+Berdasarkan plot EACF terdapat beberapa kandidat yang memungkinkan diantaranya yaitu:
+- ARIMA(1,0,1)
+- ARIMA(1,0,2)
+- ARIMA(2,0,2)
+- ARIMA(1,0,7)
+
+Sehingga berdasarkan plot ACF, PACF dan EACF menghasilkan kandidat model:
+1. ARIMA(4,0,0) -> tmodel1
+2. ARIMA(1,0,1) -> tmodel2
+3. ARIMA(1,0,2) -> tmodel3
+4. ARIMA(2,0,2) -> tmodel4
+5. ARIMA(1,0,7) -> tmodel5
+
+### 5.2 Pendugaan Parameter
+#### 5.2.1 ARIMA(4,0,0)(1,1,1)[52]
+```{r}
+tmodel1 <- Arima(train_data,order=c(4,0,0),seasonal=c(1,1,1))
+summary(tmodel1)
+```
+
+```{r}
+lmtest::coeftest(tmodel1)
+```
+
+#### 5.2.2 ARIMA(1,0,1)(1,1,1)[52]
+```{r}
+tmodel2 <- Arima(train_data,order=c(1,0,1),seasonal=c(1,1,1))
+summary(tmodel2)
+```
+
+```{r}
+lmtest::coeftest(tmodel2)
+```
+#### 5.2.3 ARIMA(1,0,2)(1,1,1)[52]
+```{r}
+tmodel3 <- Arima(train_data,order=c(1,0,2),seasonal=c(1,1,1))
+summary(tmodel3)
+```
+
+```{r}
+lmtest::coeftest(tmodel3)
+```
+
+#### 5.2.4 ARIMA(2,0,2)(1,1,1)[52]
+```{r}
+tmodel4 <- Arima(train_data,order=c(2,0,2),seasonal=c(1,1,1))
+summary(tmodel4)
+```
+
+```{r}
+lmtest::coeftest(tmodel4)
+```
+
+#### 5.2.5 ARIMA(1,0,7)(1,1,1)[52]
+```{r}
+tmodel5 <- Arima(train_data,order=c(1,0,7),seasonal=c(1,1,1))
+summary(tmodel5)
+```
+
+```{r}
+lmtest::coeftest(tmodel5)
+```
+
+#### 5.2.7 Model Tentatif
+```{r}
+AICKandidatModel <- c(tmodel1$aic, tmodel2$aic, tmodel3$aic,
+                      tmodel4$aic, tmodel5$aic)
+AICcKandidatModel <- c(tmodel1$aicc, tmodel2$aicc, tmodel3$aicc,
+                       tmodel4$aicc, tmodel5$aicc)
+BICKandidatModel <- c(tmodel1$bic, tmodel2$bic, tmodel3$bic,
+                      tmodel4$bic, tmodel5$bic)
+KandidatModelARIMA <- c("ARIMA(4,0,0)(1,1,1)52", "ARIMA(1,0,1)(1,1,1)52",
+                        "ARIMA(1,0,2)(1,1,1)52", "ARIMA(2,0,2)(1,1,1)52",
+                        "ARIMA(1,0,7)(1,1,1)52")
+compmodelARIMA <- cbind(KandidatModelARIMA, AICKandidatModel,
+                        AICcKandidatModel, BICKandidatModel)
+colnames(compmodelARIMA) <- c("Kandidat Model", "Nilai AIC", 
+                              "Nilai AICc", "Nilai BIC")
+compmodelARIMA <- as.data.frame(compmodelARIMA)
+compmodelARIMA
+```
+
+Model terbaik berdasarkan nilai AIC dan AICc terkecil dari kandidat model yaitu $ARIMA(1,0,7)(1,1,1)_{52}$, tetapi dengan mempertimbangkan signifikansi parameter dan kesederhanaan model akan dipilih $ARIMA(2,0,2)(1,1,1)_{52}$. Namun berdasarkan hasil estimasi, diperoleh bahwa sebagian besar parameter signifikan pada taraf 5%, kecuali parameter Seasonal AR(1) (p-value = 0.68) yang tidak signifikan. Hal ini menunjukkan bahwa komponen seasonal autoregressive mungkin tidak berperan penting dalam menjelaskan variasi data, sehingga model dapat disederhanakan dengan menghilangkan komponen tersebut menjadi model $ARIMA(2,0,2)(0,1,1)_{52}$.
+
+#### 5.2.4 Model Alternatif: ARIMA(2,0,2)(0,1,1)[52]
+```{r}
+tmodel4.alt <- Arima(train_data,order=c(2,0,2),seasonal=c(0,1,1))
+summary(tmodel4.alt)
+```
+
+```{r}
+lmtest::coeftest(tmodel4.alt)
+```
+
+Berdasarkan hasil tersebut, model alternatif $ARIMA(2,0,2)(0,1,1)_{52}$ memiliki nilai AIC, AICc, dan BIC yang lebih baik dari model $ARIMA(2,0,2)(1,1,1)_{52}$, sehingga akan dipilih model $ARIMA(2,0,2)(0,1,1)_{52}$ sebagai model terbaik
+
+### 5.3 Overfitting
+```{r}
+tmodel1.ofp <- Arima(train_data,order=c(3,0,2),seasonal=c(0,1,1))
+summary(tmodel1.ofp)
+```
+
+```{r}
+lmtest::coeftest(tmodel1.ofp)
+```
+
+```{r}
+tmodel1.ofq <- Arima(train_data,order=c(2,0,3),seasonal=c(0,1,1))
+summary(tmodel1.ofq)
+```
+
+```{r}
+lmtest::coeftest(tmodel1.ofq)
+```
+
+```{r}
+tmodel1.ofQ <- Arima(train_data,order=c(2,0,2),seasonal=c(0,1,2))
+summary(tmodel1.ofQ)
+```
+
+```{r}
+lmtest::coeftest(tmodel1.ofQ)
+```
+
+Untuk memastikan tidak terjadi overfitting, dilakukan pengujian terhadap model dengan menambah atau mengurangi beberapa parameter. Namun, hasil menunjukkan tidak adanya peningkatan kinerja yang signifikan, sehingga model ARIMA(2,0,2)(0,1,1)[52] dianggap paling optimal.
+
+### 5.4 Diagnostik Model
+```{r}
+tsdisplay(residuals(tmodel4.alt), lag.max=520, 
+          main='ARIMA(2,0,2)(0,1,1)52 Model Residuals', col="blue")
+```
+
+```{r}
+#Eksplorasi
+sisaan.model1 <- tmodel4.alt$residuals
+par(mfrow=c(2,2))
+car::qqPlot(sisaan.model1)
+```
+
+```{r}
+plot(c(1:length(sisaan.model1)),sisaan.model1)
+acf(sisaan.model1)
+pacf(sisaan.model1)
+```
+
+#### 5.4.2 Sisaan Menyebar Normal
+```{r}
+#1) Sisaan Menyebar Normal
+ks.test(sisaan.model1,"pnorm")
+shapiro.test(sisaan.model1)
+nortest::ad.test(sisaan.model1)
+```
+residual tidak normal.
+
+#### 5.4.2 Sisaan Saling Bebas
+```{r}
+#2) Sisaan saling bebas/tidak ada autokorelasi
+Box.test(sisaan.model1, type = "Ljung") 
+```
+tidak ada autokorelasi yang signifikan pada residual.
+
+#### 5.4.3 Sisaan Homogen
+```{r}
+#3) Sisaan homogen 
+Box.test((sisaan.model1)^2, type = "Ljung")  
+```
+sisaan tidak homogen
+
+#### 5.4.4 Nilai tengah sisaan = 0
+```{r}
+#4) Nilai tengah sisaan sama dengan nol 
+t.test(sisaan.model1, mu = 0, conf.level = 0.95) 
+```
+nilai tengah sisaan sama dengan nol
+
+#### 5.4.5 Hasil Uji
+```{r}
+hasil_uji <- data.frame(
+  "Aspek yang diuji" = c("Normalitas residual", "Autokorelasi residual", 
+                         "Heteroskedastisitas", "Rata-rata residual"),
+  "Hasil" = c("❌ Tidak normal", "✅ Tidak ada", "❌ Ada", "✅ 0"),
+  "Makna" = c("Bentuk distribusi residual tidak normal",
+              "Residual acak, white noise",
+              "Varians residual tidak konstan",
+              "Model tidak bias (mean zero)")
+)
+
+kable(hasil_uji, align = c("l", "c", "l"))
+```
+
+
+### 5.5 Peramalan 
+
+```{r}
+ramalan_sarima = forecast::forecast(tmodel4.alt, 52)
+ramalan_sarima
+```
+
+```{r}
+autoplot(ramalan_sarima, col="blue")
+```
+
+```{r}
+accuracy(ramalan_sarima,test_data)
+```
+
+## 6. TBATS
+```{r}
+fit_tbats <- tbats(data)
+forecast(fit_tbats)
+```
+
+```{r}
+n <- length(data)
+
+fit_tbats <- tbats(train_data)
+pred_tbats <- forecast(fit_tbats, h = 52)
+
+accuracy(pred_tbats, test_data)  # cek MAPE, RMSE, dsb
+```
+
